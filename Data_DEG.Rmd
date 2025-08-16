@@ -1,0 +1,324 @@
+---
+title: "DEG"
+author: "Poojitha Kolli, Dillen Wischmeier"
+date: "2025-04-12"
+output: html_document
+---
+
+
+## Import Data & Create Expression Matrices
+# Set the working directory
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(echo = TRUE)
+
+setwd("path/to/project")
+```
+
+### TCGA LUSC
+
+```{r}
+# --- Step 1: Load metadata ---
+tcga_lusc_sample_sheet <- read.delim("./raw_data/Lusc/lusc_gdc_sample_sheet.2025-02-17.tsv", stringsAsFactors = FALSE)
+
+# Build mapping from File Name → Sample ID (full TCGA barcode)
+tcga_lusc_file_to_barcode <- setNames(tcga_lusc_sample_sheet$Sample.ID, tcga_lusc_sample_sheet$File.Name)
+
+# save sample ID mapping
+dir.create("./results/Lusc", recursive = TRUE, showWarnings = FALSE)
+saveRDS(tcga_lusc_file_to_barcode, file = "./results/Lusc/tcga_lusc_file_to_barcode_map.rds")
+
+# --- Step 2: Locate expression files ---
+tcga_lusc_expr_files <- list.files("raw_data/Lusc/tcga_lusc_expr", 
+                         pattern = "rna_seq\\.augmented_star_gene_counts\\.tsv$", 
+                         recursive = TRUE, full.names = TRUE)
+
+cat("Found", length(tcga_lusc_expr_files), "TCGA Lusc expression files\n")
+
+# --- Step 3: Read and clean expression data ---
+tcga_lusc_expr_list <- lapply(tcga_lusc_expr_files, function(f) {
+  df <- read.delim(f, header = TRUE, comment.char = "#", stringsAsFactors = FALSE)
+  df <- df[!grepl("^N_", df$gene_name), ]  # remove summary lines
+  setNames(df$unstranded, df$gene_name)    # return named vector of unstranded counts
+})
+
+# --- Step 4: Build expression matrix ---
+tcga_lusc_genes <- names(tcga_lusc_expr_list[[1]])
+tcga_lusc_expr_matrix <- do.call(cbind, tcga_lusc_expr_list)
+rownames(tcga_lusc_expr_matrix) <- tcga_lusc_genes
+
+# --- Step 5: Label columns using TCGA barcodes from metadata ---
+# Extract base filenames
+tcga_lusc_file_names <- basename(tcga_lusc_expr_files)
+colnames(tcga_lusc_expr_matrix) <- vapply(basename(tcga_lusc_expr_files), function(f) {
+  if (!is.null(tcga_lusc_file_to_barcode[[f]])) tcga_lusc_file_to_barcode[[f]] else f
+}, character(1))
+
+# --- Step 6: Identify and Remove Duplicate Samples ---
+dupes <- tcga_lusc_sample_sheet[duplicated(tcga_lusc_sample_sheet$Sample.ID), "Sample.ID"]
+
+tcga_lusc_sample_sheet <- tcga_lusc_sample_sheet[!tcga_lusc_sample_sheet$Sample.ID %in% dupes, ]
+
+tcga_lusc_expr_matrix <- tcga_lusc_expr_matrix[, !colnames(tcga_lusc_expr_matrix) %in% dupes]
+
+# --- Step 7: Remove 2 samples, not in follow-up data
+not_in_fu <- c("TCGA-56-6546-01A", "TCGA-63-A5MU-01A")
+
+tcga_lusc_expr_matrix <- tcga_lusc_expr_matrix[, !colnames(tcga_lusc_expr_matrix) %in% not_in_fu]
+
+# --- Step 8: Save matrix ---
+saveRDS(tcga_lusc_expr_matrix, "./results/Lusc/tcga_lusc_expression_matrix_raw_counts.rds")
+write.table(tcga_lusc_expr_matrix, "./results/Lusc/tcga_lusc_expression_matrix_raw_counts.tsv", sep = "\t", quote = FALSE, row.names = TRUE)
+
+cat("LUSC expression matrix saved with dimensions:", dim(tcga_lusc_expr_matrix)[1], "genes x", dim(tcga_lusc_expr_matrix)[2], "samples\n")
+```
+
+```{r}
+# --- Cleanup workspace ---
+rm(list = ls())
+gc()  # garbage collection to free memory
+```
+
+### TCGA Controls
+
+```{r}
+# --- Step 1: Load metadata ---
+tcga_ctrl_sample_sheet <- read.delim("./raw_data/Ctrl/ctrl_gdc_sample_sheet.2025-04-13.tsv", stringsAsFactors = FALSE)
+
+# Build mapping from File Name → Sample ID (full TCGA barcode)
+tcga_ctrl_file_to_barcode <- setNames(tcga_ctrl_sample_sheet$Sample.ID, tcga_ctrl_sample_sheet$File.Name)
+
+# Save sample ID mapping
+dir.create("./results/Ctrl", recursive = TRUE, showWarnings = FALSE)
+saveRDS(tcga_ctrl_file_to_barcode, file = "./results/Ctrl/tcga_ctrl_file_to_barcode_map.rds")
+
+# --- Step 2: Locate expression files ---
+tcga_ctrl_expr_files <- list.files("raw_data/Ctrl/tcga_ctrl_expr", 
+                         pattern = "rna_seq\\.augmented_star_gene_counts\\.tsv$", 
+                         recursive = TRUE, full.names = TRUE)
+
+cat("Found", length(tcga_ctrl_expr_files), "TCGA Control expression files\n")
+
+# --- Step 3: Read and clean expression data ---
+tcga_ctrl_expr_list <- lapply(tcga_ctrl_expr_files, function(f) {
+  df <- read.delim(f, header = TRUE, comment.char = "#", stringsAsFactors = FALSE)
+  df <- df[!grepl("^N_", df$gene_name), ]  # remove summary lines
+  setNames(df$unstranded, df$gene_name)    # return named vector of unstranded counts
+})
+
+# --- Step 4: Build expression matrix ---
+tcga_ctrl_genes <- names(tcga_ctrl_expr_list[[1]])
+tcga_ctrl_expr_matrix <- do.call(cbind, tcga_ctrl_expr_list)
+rownames(tcga_ctrl_expr_matrix) <- tcga_ctrl_genes
+
+# --- Step 5: Label columns using TCGA barcodes from metadata ---
+tcga_ctrl_file_names <- basename(tcga_ctrl_expr_files)
+colnames(tcga_ctrl_expr_matrix) <- vapply(basename(tcga_ctrl_expr_files), function(f) {
+  if (!is.null(tcga_ctrl_file_to_barcode[[f]])) tcga_ctrl_file_to_barcode[[f]] else f
+}, character(1))
+
+# --- Step 6: Save matrix ---
+saveRDS(tcga_ctrl_expr_matrix, "./results/Ctrl/tcga_ctrl_expression_matrix_raw_counts.rds")
+write.table(tcga_ctrl_expr_matrix, "./results/Ctrl/tcga_ctrl_expression_matrix_raw_counts.tsv", sep = "\t", quote = FALSE, row.names = TRUE)
+
+cat("Control expression matrix saved with dimensions:", dim(tcga_ctrl_expr_matrix)[1], "genes x", dim(tcga_ctrl_expr_matrix)[2], "samples\n")
+```
+
+```{r}
+# --- Cleanup workspace ---
+rm(list = ls())
+gc()  # garbage collection to free memory
+```
+
+### Combined Expression Matrix
+
+```{r}
+# --- Load tumor and control expression matrices ---
+lusc <- readRDS("./results/Lusc/tcga_lusc_expression_matrix_raw_counts.rds")
+ctrl <- readRDS("./results/Ctrl/tcga_ctrl_expression_matrix_raw_counts.rds")
+
+# --- Merge matrices by columns (samples) ---
+full_expr_matrix <- cbind(lusc, ctrl)
+full_expr_matrix <- full_expr_matrix[-c(1:4), ]
+
+# --- Save combined matrix ---
+saveRDS(full_expr_matrix, "./results/tcga_full_expression_matrix_raw_counts.rds")
+write.table(full_expr_matrix, "./results/tcga_full_expression_matrix_raw_counts.tsv", 
+            sep = "\t", quote = FALSE, row.names = TRUE)
+
+cat("Merged expression matrix dimensions:", dim(full_expr_matrix)[1], "genes x", dim(full_expr_matrix)[2], "samples\n")
+```
+
+```{r}
+# Clean up
+rm(lusc, ctrl)
+gc()
+```
+
+## DEG Analysis
+
+### Preprocessing
+
+```{r}
+library(edgeR)
+library(limma)
+
+tcga_full_expression_matrix_raw_counts <- readRDS("./results/tcga_full_expression_matrix_raw_counts.rds")
+
+d0 <- DGEList(tcga_full_expression_matrix_raw_counts)
+
+d_norm <- calcNormFactors(d0)
+
+logcpm <- cpm(d_norm, log=TRUE)
+
+saveRDS(logcpm, "./results/tcga_full_expression_normalized.rds")
+#write.table(logcpm_t, "./results/tcga_full_expression_normalized.tsv", 
+#            sep = "\t", quote = FALSE, row.names = TRUE)
+```
+
+```{r}
+# create the grouping table to use for design matrix construction
+group <- factor(c(rep("Lusc", 468), rep("Ctrl", 51)))
+ColData = as.data.frame(group, row.names = colnames(tcga_full_expression_matrix_raw_counts))
+
+# Build design matrix
+mm <- model.matrix(~0 + group)
+```
+
+### MDS & Mean-variance Plots
+
+#### CPM
+
+```{r}
+cutoff <- 2
+drop <- which(apply(cpm(d0), 1, max) < cutoff)
+d <- d0[-drop,] 
+dim(d) # number of genes left
+```
+
+```{r}
+# MDS
+plotMDS(d, col = as.numeric(group))
+```
+
+```{r}
+# mean-variance
+y2 <- voom(d, mm, plot = T)
+```
+
+```{r}
+cutoff <- 12
+drop <- which(apply(cpm(d0), 1, max) < cutoff)
+d <- d0[-drop,] 
+dim(d) # number of genes left
+```
+
+```{r}
+# MDS
+plotMDS(d, col = as.numeric(group))
+```
+
+```{r}
+# mean-variance
+y12 <- voom(d, mm, plot = T)
+```
+
+#### `filterByExpr`
+
+```{r}
+keep <- filterByExpr(d0, design = mm) # Finalized filter
+dge_filtered <- d0[keep, ]
+dge_filtered <- calcNormFactors(dge_filtered)
+```
+
+
+```{r}
+# MDS plot shows variance between samples (columns)
+mds_plot <- plotMDS(dge_filtered, col = as.numeric(group))
+# ggsave("./figures/mds_plot.tiff", plot = last_plot(), width = 6, height = 4, units = "in")
+```
+
+```{r}
+# mean-variance shows variance between genes (rows)
+w <- voom(dge_filtered, mm, plot = T)
+# ggsave("./figures/mean_variance_plot.tiff", plot = last_plot(), width = 6, height = 4, units = "in")
+filtered_data <- w$E
+saveRDS(filtered_data, "./results/tcga_filtered_expression_normalized.rds")
+#write.table(filtered_data, "./results/tcga_filtered_expression_normalized.tsv", 
+#            sep = "\t", quote = FALSE, row.names = TRUE)
+```
+
+```{r}
+rm(d, d0, tcga_full_expression_matrix_raw_counts, y2, y12, drop, keep, cutoff)
+gc()
+```
+
+### PCA Plots
+
+```{r, warning=FALSE}
+library(ggplot2)
+library(ggrepel)
+## MAKE SURE TO TRANSPOSE THE EXPRESSION MATRIX
+
+pca <- prcomp(t(w$E))
+
+pve <- (pca$sdev)^2 / sum(pca$sdev^2) * 100
+PC1_lab <- paste0("PC1 (", round(pve[1], 1), "%)")
+PC2_lab <- paste0("PC2 (", round(pve[2], 1), "%)")
+
+## Join the PCs to the sample information
+cbind(ColData, pca$x) |> 
+ggplot(aes(x = PC1, y=PC2, col=group, label=rownames(ColData))) + geom_point() + geom_text_repel() + xlab(PC1_lab) + ylab(PC2_lab)
+```
+
+```{r}
+fit <- lmFit(w, mm)
+head(coef(fit))
+```
+
+```{r}
+contr <- makeContrasts(groupLusc - groupCtrl, levels = colnames(coef(fit)))
+contr
+```
+
+```{r}
+tmp <- contrasts.fit(fit, contr)
+
+# Empirical Bayes smoothing of standard errors (shrinks standard errors that are much larger or smaller than those from other genes towards the average standard error) (see https://www.degruyter.com/doi/10.2202/1544-6115.1027)
+
+tmp <- eBayes(tmp)
+```
+
+```{r}
+top.table <- topTable(tmp, sort.by = "P", n = Inf)
+head(top.table, 20)
+```
+
+### DEGs
+
+```{r}
+degs <- top.table |> 
+  dplyr::filter(abs(logFC) > 0.5 &
+                adj.P.Val < 0.05)
+
+write.csv(degs,"./results/degs.csv")
+```
+
+### Common genes between DEGs and PI3K/Akt pathway (KEGG)
+
+```{r}
+library(KEGGREST)
+
+# Get gene entries for hsa05207
+hsa04151 <- keggGet("hsa04151")[[1]]$GENE
+
+# Extract only the gene symbols (every second element)
+kegg_pi3k <- hsa04151[seq(2, length(hsa04151), by = 2)]
+kegg_pi3k <- sub(";.*", "", kegg_pi3k)
+
+kegg_pi3k_common <- intersect(degs$ID, kegg_pi3k)
+length(kegg_pi3k_common)
+saveRDS(kegg_pi3k_common, file = "./results/kegg_pi3k_common_genelist.rds")
+```
+
+

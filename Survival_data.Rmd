@@ -1,0 +1,90 @@
+---
+title: "Survival data"
+author: "Poojitha Kolli, Dillen Wischmeier"
+date: "2025-04-12"
+output: html_document
+---
+
+# Set the working directory
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(echo = TRUE)
+
+setwd("path/to/project")
+```
+
+# Load the data
+
+```{r}
+library(dplyr)
+
+# Sample sheet
+tcga_lusc_sample_sheet <- read.delim("./raw_data/Lusc/lusc_gdc_sample_sheet.2025-02-17.tsv", stringsAsFactors = FALSE)
+
+# Follow-up
+lusc_fu <- read.delim("./raw_data/Lusc/tcga_lusc_clinical/follow_up.tsv", stringsAsFactors = FALSE)
+
+# Clinical data
+lusc_cli <- read.delim("./raw_data/Lusc/tcga_lusc_clinical/clinical.tsv", stringsAsFactors = FALSE)
+
+```
+
+# Extract duplicates
+
+```{r}
+dupes <- tcga_lusc_sample_sheet %>%
+  filter(duplicated(Sample.ID)) %>%
+  mutate(case_id = substr(Sample.ID, 1, 12)) %>% # match expression data IDs
+  pull(case_id)
+```
+
+# Remove duplicates from follow-up and clinical data
+
+```{r}
+lusc_fu <- lusc_fu[!lusc_fu$case_submitter_id %in% dupes, ]
+lusc_cli <- lusc_cli[!lusc_cli$case_submitter_id %in% dupes, ]
+```
+
+# Filter survival time for 'Last Contact'
+
+```{r}
+survival_time <- lusc_fu %>%
+  filter(timepoint_category == "Last Contact") %>%
+  select(case_submitter_id, days_to_follow_up)
+```
+
+# Extract vital status
+
+```{r}
+survival_status <- lusc_cli %>%
+  select(case_submitter_id, vital_status) %>%
+  distinct()
+```
+
+# Remove IDs from survival_status that are not in survival_time
+
+```{r}
+# Find IDs present in survival_status but NOT in survival_time
+setdiff(survival_status$case_submitter_id, survival_time$case_submitter_id)
+```
+
+# Merge to get the survival data
+
+```{r}
+survival_data <- left_join(survival_time, survival_status, by = "case_submitter_id") %>%
+  mutate(OS = if_else(vital_status == "Dead", 0, 1)) %>%
+  rename(OS.time = days_to_follow_up) %>%
+  mutate(OS.time = as.numeric(OS.time), 
+         OS.time = if_else(OS.time == 0, 1e-5, OS.time)) %>%
+  select(-vital_status)
+
+
+# save survival data
+dir.create("./results", recursive = TRUE, showWarnings = FALSE)
+write.table(survival_data, "./results/tcga_lusc_survival_data.tsv", sep = "\t")
+```
+
+
+
+
+

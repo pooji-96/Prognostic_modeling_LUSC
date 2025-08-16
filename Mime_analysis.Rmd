@@ -1,0 +1,341 @@
+---
+title: "Mime_analysis"
+author: "Poojitha Kolli, Dillen Wischmeier"
+date: "2025-05-03"
+output: html_document
+---
+
+# Set the working directory
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = "C:/Users/kpooj/Documents/MS/Fourth_Sem/ML assignments/Project/git-repo/")
+```
+
+# Load the data
+
+```{r}
+library(dplyr)
+
+# Survival data
+survival_data <- read.delim("./results/tcga_lusc_survival_data.tsv", stringsAsFactors = FALSE)
+
+# Filtered data
+tcga_filtered <- readRDS("./results/tcga_filtered_expression_normalized.rds")
+
+# Full expression data
+tcga_full <- readRDS("./results/tcga_full_expression_normalized.rds")
+```
+
+# Mime Input
+
+### Filtered expression data
+
+```{r}
+# Filtered expression data
+# Full expression data
+lusc_filtered <- tcga_filtered %>%
+  as.data.frame() %>%
+  select(1:468) %>%   # lusc samples
+  rename_with(~ substr(., 1, 12)) %>%
+  t() %>%             # transpose
+  as.data.frame()
+
+# Reorder lusc_full to match the samples in survival_data
+lusc_filtered <- lusc_filtered[match(survival_data$case_submitter_id, rownames(lusc_filtered)), , drop = FALSE]
+
+# Combine survival data with expression data
+lusc_filtered <- cbind(survival_data, lusc_filtered)
+colnames(lusc_filtered)[colnames(lusc_filtered) == "case_submitter_id"] <- "ID"
+
+# sampling
+set.seed(2025) # for reproducibility
+train_indices <- sample(1:nrow(lusc_filtered), round(0.75 * nrow(lusc_filtered)))
+
+# Create training and testing datasets
+lusc_train <- lusc_filtered[train_indices, ]
+lusc_test <- lusc_filtered[-train_indices, ]
+
+# Save both datasets to an .RData file
+split_data <- list(train = lusc_train, test = lusc_test)
+dir.create("./Mime/Input", recursive = TRUE, showWarnings = FALSE)
+save(split_data, file = "./Mime/Input/lusc_split_filtered.RData")
+```
+
+### Full expression data
+
+```{r}
+# Full expression data
+lusc_full <- tcga_full %>%
+  as.data.frame() %>%
+  select(1:468) %>%   # lusc samples
+  rename_with(~ substr(., 1, 12)) %>%
+  t() %>%             # transpose
+  as.data.frame()
+
+# Reorder lusc_full to match the samples in survival_data
+lusc_full <- lusc_full[match(survival_data$case_submitter_id, rownames(lusc_full)), , drop = FALSE]
+
+# Combine survival data with expression data
+lusc_full <- cbind(survival_data, lusc_full)
+colnames(lusc_full)[colnames(lusc_full) == "case_submitter_id"] <- "ID"
+
+# sampling
+set.seed(2025) # for reproducibility
+train_indices <- sample(1:nrow(lusc_full), round(0.75 * nrow(lusc_full)))
+
+# Create training and testing datasets
+lusc_train_full <- lusc_full[train_indices, ]
+lusc_test_full <- lusc_full[-train_indices, ]
+
+# Save both datasets to an .RData file
+split_data_lusc <- list(train = lusc_train_full, test = lusc_test_full)
+save(split_data_lusc, file = "./Mime/Input/lusc_split_full.RData")
+```
+
+```{r}
+# --- Cleanup workspace ---
+rm(list = ls())
+gc()  # garbage collection to free memory
+```
+
+
+# Mime_analysis
+# Using the highly variable genes dataset (~27k genes)-------------------------
+
+## Load the data
+
+```{r}
+# Load required libraries
+library(Mime1)
+library(survminer)
+library(immunedeconv)
+
+# Load necessary data
+load("./Mime/Input/lusc_split_filtered.RData")
+gene_list <- readRDS("./results/kegg_pi3k_common_genelist.rds")
+split_data[["train"]]$OS.time[split_data[["train"]]$OS.time == 0] <- 1e-5
+```
+
+
+## 1. Select the Optimal Model
+
+```{r}
+# Perform model selection
+res <- ML.Dev.Prog.Sig(
+  train_data = split_data$train,
+  list_train_vali_Data = split_data,
+  unicox.filter.for.candi = TRUE,
+  unicox_p_cutoff = 0.05,
+  candidate_genes = gene_list,
+  mode = 'all',
+  nodesize = 5,
+  seed = 5201314
+)
+
+# Check warnings after model fitting
+warnings()
+```
+
+### Plot C-index of Each Model
+
+```{r}
+# Plot the C-index of each model
+plot_cindex_all = cindex_dis_all(res, validate_set = names(split_data)[-1], order = names(split_data), width = 0.35)
+dir.create("./Mime/Ouput_27k", recursive = TRUE, showWarnings = FALSE)
+ggsave("./Mime/Ouput_27k/cindex_all_models.png", plot = plot_cindex_all, width = 6.25, height = 18, dpi = 400)
+```
+
+### Plot C-index for a Specific Model
+
+```{r}
+# Plot the C-index for a specific model among different datasets
+cindex_select_plot = cindex_dis_select(res,
+                                       model = "Lasso + SuperPC",
+                                       order = names(split_data))
+ggsave("./Mime/Ouput_27k/cindex_selected_model.png", plot = cindex_select_plot, width = 6, height = 1.5, dpi = 300)
+```
+
+```{r}
+# --- Cleanup workspace ---
+rm(list = ls())
+gc()
+```
+
+
+
+# Using whole dataset of cancer samples (~60k genes) ---------------------------
+
+## Load the data
+
+```{r}
+# Load necessary data
+load("./Mime/Input/lusc_split_full.Rdata")
+gene_list <- readRDS("./results/kegg_pi3k_common_genelist.rds")
+split_data_lusc[["train"]]$OS.time[split_data_lusc[["train"]]$OS.time == 0] <- 1e-5
+```
+
+## 1. Select the Optimal Model
+
+```{r}
+# Perform model selection
+res <- ML.Dev.Prog.Sig(
+  train_data = split_data_lusc$train,
+  list_train_vali_Data = split_data_lusc,
+  unicox.filter.for.candi = TRUE,
+  unicox_p_cutoff = 0.05,
+  candidate_genes = gene_list,
+  mode = 'all',
+  nodesize = 5,
+  seed = 5201314
+)
+
+# Check warnings after model fitting
+warnings()
+```
+
+### Plot C-index of Each Model
+
+```{r}
+# Plot the C-index of each model
+plot_cindex_all = cindex_dis_all(res, validate_set = names(split_data_lusc)[-1], order = names(split_data_lusc), width = 0.35)
+dir.create("./Mime/Ouput_60k", recursive = TRUE, showWarnings = FALSE)
+ggsave("./Mime/Ouput_60k/cindex_all_models.png", plot = plot_cindex_all, width = 6.25, height = 18, dpi = 400)
+```
+
+### Plot C-index for a Specific Model
+
+```{r}
+# Plot the C-index for a specific model among different datasets
+cindex_select_plot = cindex_dis_select(res,
+                                       model = "Lasso + SuperPC",
+                                       order = names(split_data_lusc))
+ggsave("./Mime/Ouput_60k/cindex_selected_model.png", plot = cindex_select_plot, width = 6, height = 1.5, dpi = 300)
+```
+
+
+
+The following steps outline how we would proceed with evaluating the model’s predictive performance and conducting immune infiltration analysis. However, since we were unable to develop a reliable model during our analysis, we have decided to halt further steps at this stage.
+
+
+### Plot Survival Curves Based on Risk Score
+
+```{r}
+# Generate survival curves based on risk scores from a specific model
+survplot <- vector("list", 2) 
+for (i in c(1:2)) {
+  survplot[[i]] <- rs_sur(res, model_name = "Lasso + SuperPC", 
+                          dataset = names(split_data)[i],
+                          median.line = "hv", 
+                          cutoff = 0.5, 
+                          conf.int = TRUE,
+                          xlab = "Day", 
+                          pval.coord = c(1000, 0.9))
+}
+png("./Mime/Ouput_27k/survival_curves.png", width = 12, height = 6, units = "in", res = 300)
+
+# Plot survival curves in a grid
+aplot::plot_list(gglist = survplot, ncol = 2)
+```
+
+## 2. Calculate AUC Scores for Different Models
+
+```{r}
+# Calculate AUC for 1-year, 3-year, and 5-year predictions
+all.auc.1y <- cal_AUC_ml_res(res.by.ML.Dev.Prog.Sig = res, 
+                              train_data = split_data[["train"]],
+                              inputmatrix.list = split_data, 
+                              mode = 'all', 
+                              AUC_time = 1, 
+                              auc_cal_method = "KM")
+all.auc.3y <- cal_AUC_ml_res(res.by.ML.Dev.Prog.Sig = res, 
+                              train_data = split_data[["train"]],
+                              inputmatrix.list = split_data, 
+                              mode = 'all', 
+                              AUC_time = 3, 
+                              auc_cal_method = "KM")
+all.auc.5y <- cal_AUC_ml_res(res.by.ML.Dev.Prog.Sig = res, 
+                              train_data = split_data[["train"]],
+                              inputmatrix.list = split_data, 
+                              mode = 'all', 
+                              AUC_time = 5, 
+                              auc_cal_method = "KM")
+
+```
+
+### Plot AUC Scores for 1-Year Prediction
+
+```{r}
+# Plot AUC scores for 1-year prediction
+auc_plot_1y = auc_dis_all(all.auc.1y,
+                          dataset = names(split_data),
+                          validate_set = names(split_data)[-1],
+                          order = names(split_data),
+                          width = 0.35,
+                          year = 1)
+ggsave("./Mime/Ouput_27kMime_Output/auc_plot_all_1yr.png", plot = auc_plot_1y, width = 6.25, height = 18, dpi = 400)
+
+```
+
+### Plot ROC Curve for Specific Model
+
+```{r}
+# Plot ROC curve for a specific model across different datasets
+auc_1y_select_model = roc_vis(all.auc.1y,
+                              model_name = "Lasso + SuperPC",
+                              dataset = names(split_data),
+                              order = names(split_data),
+                              anno_position = c(0.65, 0.55),
+                              year = 1)
+ggsave("./Mime/Ouput_27k/auc_1y_select_model.png", plot = auc_1y_select_model, width = 6, height = 6, dpi = 300)
+```
+
+### Plot AUC for 1, 3, and 5 Years
+
+```{r}
+# Plot AUC for 1, 3, and 5 years
+auc_1_3_5y_model = auc_dis_select(list(all.auc.1y, all.auc.3y, all.auc.5y),
+                            model_name = "Lasso + SuperPC",
+                            dataset = names(split_data),
+                            order = names(split_data),
+                            year = c(1, 3, 5))
+ggsave("./Mime/Ouput_27k/auc_1_3_5y_selected_model.png", plot = auc_1_3_5y_model, width = 6, height = 1.5, dpi = 300)
+```
+
+## 3. Meta-Analysis of Univariate Cox Regression
+
+```{r}
+library(conflicted)
+# Perform univariate Cox regression for a specific model
+unicox.rs.res <- cal_unicox_ml_res(res.by.ML.Dev.Prog.Sig = res,
+                                   optimal.model = "Lasso + SuperPC",
+                                   type = 'categorical')
+
+# Perform meta-analysis on the univariate Cox results
+metamodel <- cal_unicox_meta_ml_res(input = unicox.rs.res)
+
+# Visualize the results of the meta-analysis
+meta_unicox_vis(metamodel, dataset = names(split_data))
+
+```
+
+## 4. Immune Infiltration Analysis
+
+```{r}
+conflicts_prefer(dplyr::filter)  # Resolve package conflicts
+
+# Perform immune deconvolution
+devo <- TME_deconvolution_all(split_data)
+
+# Plot immune infiltration heatmap for a specific model
+immune_heatmap = immuno_heatmap(res,
+                                devo,
+                                model_name = "Lasso + SuperPC",
+                                dataset = "train")
+png("./Mime/Ouput_27k/immune_heatmap.png", width = 18, height = 8, units = "in", res = 300)
+draw(immune_heatmap)
+dev.off()
+```
+
+
+
+
