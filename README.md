@@ -1,7 +1,7 @@
 # Identifying gene signatures with prognostic significance for lung squamous cell carcinoma  
 
 ## Description:
-   This repository contains the full code, intermediate data, and analysis outputs for a prognostic modeling study in lung squamous cell carcinoma (LUSC) using TCGA RNA-seq and clinical data. The workflow includes differential gene expression analysis, filtering for genes associated with the PI3K/Akt signaling pathway, and prognostic modeling using the MIME R package.
+   This repository contains the full code for a prognostic modeling study in lung squamous cell carcinoma (LUSC) using TCGA RNA-seq and clinical data. The workflow includes differential gene expression analysis, filtering for genes associated with the PI3K/Akt signaling pathway, and prognostic modeling using the MIME R package.
 
 ## Data
 
